@@ -56,7 +56,7 @@ def create_officer(request):
 
 def view_officers(request):
     officers = OfficerProfile.objects.select_related('user', 'department')
-    return render(request, 'officer/view_officers.html', {'officers': officers})
+    return render(request, 'officer/view_officer.html', {'officers': officers})
 
 def delete_officer(request, username):
     user = get_object_or_404(User, username=username, user_type='OFFICER')

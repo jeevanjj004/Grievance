@@ -10,6 +10,8 @@ urlpatterns = [
     path('dashboard/', views.collector_dashboard, name='collector_dashboard'),
     path('collector_profile/', views.collector_profile_view, name='collector_profile'),
     path('officer_details/', views.officer_details, name='officer_details'),
+    # path('search_grievance_by_id/', views.search_grievance_by_id, name='search_grievance_by_id'),
+
 
 
 

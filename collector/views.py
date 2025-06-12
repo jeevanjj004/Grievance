@@ -4,8 +4,9 @@ from django.contrib import messages
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import Group
 from grievance_app.models import Grievance  # adjust import if your app name differs
+from django.db.models import Count, Q
 
-from .forms import CollectorUserForm, CollectorProfileForm
+from .forms import CollectorCreateUserForm, CollectorUpdateUserForm,CollectorProfileForm
 from .models import CollectorProfile
 from user.models import User
 from core_app.models import Department, District
@@ -21,7 +22,7 @@ def auto_collector_id(district):
 
 # Create new collector (user + profile)
 def create_collector(request):
-    user_form = CollectorUserForm(request.POST or None)
+    user_form = CollectorCreateUserForm(request.POST or None)
     profile_form = CollectorProfileForm(request.POST, request.FILES)
 
     if request.method == 'POST':
@@ -67,35 +68,33 @@ def view_collector(request):
     return render(request, 'collector/collector_list.html', {'collectors': collectors})
 
 
-
 def update_collector(request, username):
+    # Get the existing user and profile
     user_instance = get_object_or_404(User, username=username, user_type='COLLECTOR')
     profile_instance = get_object_or_404(CollectorProfile, user=user_instance)
 
-    user_form = CollectorUserForm(request.POST or None, instance=user_instance)
+    # Use update forms (no password fields)
+    user_form = CollectorUpdateUserForm(request.POST or None, instance=user_instance)
     profile_form = CollectorProfileForm(request.POST or None, request.FILES or None, instance=profile_instance)
 
     if request.method == 'POST':
         if user_form.is_valid() and profile_form.is_valid():
             district = profile_form.cleaned_data['district']
 
+            # Save updated user details (without password)
             user = user_form.save(commit=False)
-            user.username = auto_collector_id(district)
-
-            # # ✅ Only set a new password if entered
-            # password = user_form.cleaned_data.get('password')
-            # if password:
-            #     user.set_password(password)
-
+            user.username = auto_collector_id(district)  # Regenerate username based on new district (if changed)
             user.save()
 
+            # Save updated profile
             profile = profile_form.save(commit=False)
             profile.user = user
-            profile.collector_id = user.username
+            profile.collector_id = user.username  # Keep in sync with new username
             profile.save()
 
             messages.success(request, f"Collector '{user.username}' updated successfully.")
             return redirect('collector:view_collector')
+
         else:
             print("User form errors:", user_form.errors)
             print("Profile form errors:", profile_form.errors)
@@ -104,7 +103,6 @@ def update_collector(request, username):
         'user_form': user_form,
         'profile_form': profile_form
     })
-
 
 # Delete a collector
 def delete_collector(request, username):
@@ -116,37 +114,53 @@ def delete_collector(request, username):
 
 # collector dashboard view
 
+
 @login_required
 def collector_dashboard(request):
     try:
-        # Collector info
-        collector = CollectorProfile.objects.get(user=request.user)
+        collector = CollectorProfile.objects.select_related('district').get(user=request.user)
         district = collector.district
 
-        # Department, district, and collector data
-        departments = Department.objects.all()
-        districts = District.objects.all()
-        collectors = CollectorProfile.objects.all()
+        # Departments and grievance counts
+        departments = Department.objects.filter(district=district)
 
-        # Grievance counts for that district
+        dept_data = []
+        for dept in departments:
+            grievances = Grievance.objects.filter(district=district, department=dept)
+            total = grievances.count()
+            pending = grievances.filter(status='PENDING').count()
+            resolved = total - pending
+            percent = round((pending / total) * 100, 1) if total > 0 else 0.0
+            dept_data.append({
+                'name': dept.name,
+                'code': dept.code,  # Add this line if `code` exists in your Department model
+                'grievance_id': grievances.first().grievance_id if grievances.exists() else 'N/A',
+                'total': total,
+                'pending': pending,
+                'percent': percent,
+                'badge_class': 'danger' if percent >= 75 else 'warning' if percent >= 25 else 'success',
+            })
+
+
+        # ✅ Sort by highest pending grievances first
+        dept_data.sort(key=lambda x: x['pending'], reverse=True)
         grievances = Grievance.objects.filter(district=district)
-        total = grievances.count()
-        pending = grievances.filter(status='PENDING').count()
-        resolved = total-pending
+        total_all = grievances.count()
+        pending_all = grievances.filter(status='PENDING').count()
+        resolved_all = total_all - pending_all
 
         context = {
-            'departments': departments,
-            'districts': districts,
-            'collectors': collectors,
+            'departments': dept_data,
+            'districts': district,
+            'collectors': collector,
             'counts': {
-                'total_grievances': total,
-                'pending_grievances': pending,
-                'resolved_grievances': resolved,
+                'total_grievances': total_all,
+                'pending_grievances': pending_all,
+                'resolved_grievances': resolved_all,
             }
         }
 
         return render(request, 'collector/collector_dashboard.html', context)
-
     except CollectorProfile.DoesNotExist:
         messages.error(request, "Access denied. Collector profile not found.")
         return redirect('login')
@@ -198,3 +212,21 @@ def officer_details(request):
     return render(request, 'collector/hod_list.html', context)
 
 
+
+
+# @login_required
+# def search_grievance_by_id(request):
+#     collector = get_object_or_404(CollectorProfile, user=request.user)
+#     district = collector.district
+#     grievances = Grievance.objects.filter(district=district)
+
+#     # Get the grievance ID from the request (can be POST or GET based on form method)
+#     grievance_id = request.GET.get('grievance_id') or request.POST.get('grievance_id')
+
+#     if grievance_id:
+#         grievances = grievances.filter(grievance_id__icontains=grievance_id)
+
+#     return render(request, 'collector/grievance_search_results.html', {
+#         'grievances': grievances,
+#         'departments': Department.objects.filter(district=district),
+#     })
